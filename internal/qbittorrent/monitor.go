@@ -2,12 +2,13 @@ package qbittorrent
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/alist-org/alist/v3/internal/stream"
 
 	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/alist-org/alist/v3/internal/op"
@@ -85,7 +86,7 @@ func (m *Monitor) update() (bool, error) {
 	}
 
 	progress := float64(info.Completed) / float64(info.Size) * 100
-	m.tsk.SetProgress(int(progress))
+	m.tsk.SetProgress(progress)
 	switch info.State {
 	case UPLOADING, PAUSEDUP, QUEUEDUP, STALLEDUP, FORCEDUP, CHECKINGUP:
 		err = m.complete()
@@ -157,17 +158,22 @@ func (m *Monitor) complete() error {
 				if err != nil {
 					return errors.Wrapf(err, "failed to open file %s", tempPath)
 				}
-				stream := &model.FileStream{
+				s := stream.FileStream{
 					Obj: &model.Object{
 						Name:     fileName,
 						Size:     size,
 						Modified: time.Now(),
 						IsFolder: false,
 					},
-					ReadCloser: struct{ io.ReadSeekCloser }{f},
-					Mimetype:   mimetype,
+					Reader:   f,
+					Closers:  utils.NewClosers(f),
+					Mimetype: mimetype,
 				}
-				return op.Put(tsk.Ctx, storage, dstDir, stream, tsk.SetProgress)
+				ss, err := stream.NewSeekableStream(s, nil)
+				if err != nil {
+					return err
+				}
+				return op.Put(tsk.Ctx, storage, dstDir, ss, tsk.SetProgress)
 			},
 		}))
 	}

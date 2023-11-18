@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/alist-org/alist/v3/internal/stream"
+
 	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/alist-org/alist/v3/internal/op"
 	"github.com/alist-org/alist/v3/pkg/task"
@@ -99,7 +101,7 @@ func (m *Monitor) Update() (bool, error) {
 		downloaded = 0
 	}
 	progress := float64(downloaded) / float64(total) * 100
-	m.tsk.SetProgress(int(progress))
+	m.tsk.SetProgress(progress)
 	switch info.Status {
 	case "complete":
 		err := m.Complete()
@@ -162,22 +164,27 @@ func (m *Monitor) Complete() error {
 				if err != nil {
 					return errors.Wrapf(err, "failed to open file %s", file.Path)
 				}
-				stream := &model.FileStream{
+				s := stream.FileStream{
 					Obj: &model.Object{
 						Name:     path.Base(file.Path),
 						Size:     size,
 						Modified: time.Now(),
 						IsFolder: false,
 					},
-					ReadCloser: f,
-					Mimetype:   mimetype,
+					Reader:   f,
+					Closers:  utils.NewClosers(f),
+					Mimetype: mimetype,
+				}
+				ss, err := stream.NewSeekableStream(s, nil)
+				if err != nil {
+					return err
 				}
 				relDir, err := filepath.Rel(m.tempDir, filepath.Dir(file.Path))
 				if err != nil {
 					log.Errorf("find relation directory error: %v", err)
 				}
 				newDistDir := filepath.Join(dstDirActualPath, relDir)
-				return op.Put(tsk.Ctx, storage, newDistDir, stream, tsk.SetProgress)
+				return op.Put(tsk.Ctx, storage, newDistDir, ss, tsk.SetProgress)
 			},
 		}))
 	}
